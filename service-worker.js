@@ -1,58 +1,100 @@
-// 避難所案内マップ Service Worker
-const CACHE_VERSION = 'v1';
+// 避難所案内マップ Service Worker v2
+// UIは変更せず、アプリ本体のオフライン起動と外部ライブラリの再利用を担当する。
+// 地図のオフライン本体（国土地理院PMTiles Range）は index.html 側の専用Cache Storageで管理する。
+
+const CACHE_VERSION = 'v2';
 const CORE_CACHE = `hinanjo-core-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `hinanjo-runtime-${CACHE_VERSION}`;
-// 注意: この名前は index.html 内の TILE_CACHE_NAME と必ず一致させること
-// （事前ダウンロードしたタイルとService Workerが参照するキャッシュを一致させるため）
-const TILE_CACHE = `hinanjo-tiles-${CACHE_VERSION}`;
+const CURRENT_PMTILES_CACHE = 'hinanjo-pmtiles-gsi-optbv-2026-04-v2';
 
-const MAX_TILE_ENTRIES = 300;
-
-// アプリの起動に最低限必要なファイル（同一オリジン）
+// アプリの起動に最低限必要な同一オリジン資産
 const CORE_ASSETS = [
   './',
   './index.html',
   './manifest.json',
+  './icons/favicon-16.png',
+  './icons/favicon-32.png',
+  './icons/apple-touch-icon.png',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-192.png',
   './icons/icon-maskable-512.png'
 ];
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CORE_CACHE)
-      .then((cache) => cache.addAll(CORE_ASSETS))
-      .then(() => self.skipWaiting())
-  );
-});
+// 完全オフライン起動に必要な外部ライブラリ。
+// install自体は、CDNの一時障害でPWA全体が登録不能にならないよう allSettled で扱う。
+const EXTERNAL_APP_ASSETS = [
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+  'https://cdn.tailwindcss.com/',
+  'https://gsi-cyberjapan.github.io/optimal_bvmap/lib/maplibre-gl@2.4.0/maplibre-gl.css',
+  'https://gsi-cyberjapan.github.io/optimal_bvmap/lib/maplibre-gl@2.4.0/maplibre-gl.js',
+  'https://gsi-cyberjapan.github.io/optimal_bvmap/lib/pmtiles@2.10.0/index.js',
+  'https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.20/leaflet-maplibre-gl.js',
+  'https://gsi-cyberjapan.github.io/optimal_bvmap/style/std.json',
+  'https://gsi-cyberjapan.github.io/optimal_bvmap/sprite/std.json',
+  'https://gsi-cyberjapan.github.io/optimal_bvmap/sprite/std.png',
+  'https://gsi-cyberjapan.github.io/optimal_bvmap/sprite/std@2x.json',
+  'https://gsi-cyberjapan.github.io/optimal_bvmap/sprite/std@2x.png'
+];
 
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((names) => Promise.all(
-      names
-        .filter((name) => ![CORE_CACHE, RUNTIME_CACHE, TILE_CACHE].includes(name))
-        .map((name) => caches.delete(name))
-    )).then(() => self.clients.claim())
-  );
-});
-
-// 地図タイルキャッシュのサイズを上限内に保つ
-async function trimCache(cacheName, maxEntries) {
-  const cache = await caches.open(cacheName);
-  const keys = await cache.keys();
-  if (keys.length > maxEntries) {
-    await cache.delete(keys[0]);
-    await trimCache(cacheName, maxEntries);
+async function cacheExternalAsset(cache, url) {
+  try {
+    const response = await fetch(url, { cache: 'no-store' });
+    if (response.ok || response.type === 'opaque') {
+      await cache.put(url, response.clone());
+    }
+  } catch (e) {
+    console.warn('[SW] external precache skipped:', url, e);
   }
 }
 
-function isTileRequest(url) {
-  return /tile\.openstreetmap\.org/.test(url);
+self.addEventListener('install', (event) => {
+  event.waitUntil((async () => {
+    const core = await caches.open(CORE_CACHE);
+    await core.addAll(CORE_ASSETS);
+
+    const runtime = await caches.open(RUNTIME_CACHE);
+    await Promise.allSettled(EXTERNAL_APP_ASSETS.map((url) => cacheExternalAsset(runtime, url)));
+
+    await self.skipWaiting();
+  })());
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(names.map((name) => {
+      const keep = name === CORE_CACHE ||
+                   name === RUNTIME_CACHE ||
+                   name === CURRENT_PMTILES_CACHE;
+      return keep ? Promise.resolve(false) : caches.delete(name);
+    }));
+    await self.clients.claim();
+  })());
+});
+
+function isOpenStreetMapTile(url) {
+  return /^https:\/\/tile\.openstreetmap\.org\//.test(url);
 }
 
-function isCdnAsset(url) {
-  return /unpkg\.com|cdn\.tailwindcss\.com|fonts\.googleapis\.com|fonts\.gstatic\.com/.test(url);
+function isRuntimeAsset(url) {
+  return /unpkg\.com|cdn\.tailwindcss\.com|fonts\.googleapis\.com|fonts\.gstatic\.com|gsi-cyberjapan\.github\.io/.test(url);
+}
+
+async function staleWhileRevalidate(request) {
+  const cache = await caches.open(RUNTIME_CACHE);
+  // index.html側が同名ランタイムキャッシュへ保存したstyle/glyphもここで拾える。
+  const cached = await cache.match(request);
+  const network = fetch(request)
+    .then(async (response) => {
+      if (response && (response.ok || response.type === 'opaque')) {
+        await cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => cached);
+  return cached || network;
 }
 
 self.addEventListener('fetch', (event) => {
@@ -61,63 +103,52 @@ self.addEventListener('fetch', (event) => {
 
   const url = request.url;
 
-  // ページ遷移（ナビゲーション）：ネットワーク優先、失敗時はキャッシュ済みindex.htmlを返す
+  // 重要: OSM公式タイルは永続キャッシュ/一括保存しない。
+  // 通常閲覧時はネットワークへそのまま流し、HTTPキャッシュ規則はブラウザに任せる。
+  if (isOpenStreetMapTile(url)) {
+    return;
+  }
+
+  // ページ遷移：ネットワーク優先。圏外なら保存済みindex.htmlで起動する。
   if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const clone = response.clone();
-          caches.open(CORE_CACHE).then((cache) => cache.put('./index.html', clone));
-          return response;
-        })
-        .catch(() => caches.match('./index.html'))
-    );
-    return;
-  }
-
-  // 地図タイル：キャッシュ優先、裏でネットワーク更新（オフラインでも既訪問エリアを表示可能に）
-  if (isTileRequest(url)) {
-    event.respondWith(
-      caches.open(TILE_CACHE).then(async (cache) => {
-        const cached = await cache.match(request);
-        const fetchPromise = fetch(request).then((response) => {
-          if (response.ok) {
-            cache.put(request, response.clone());
-            trimCache(TILE_CACHE, MAX_TILE_ENTRIES);
-          }
-          return response;
-        }).catch(() => cached);
-        return cached || fetchPromise;
-      })
-    );
-    return;
-  }
-
-  // CDN上のライブラリ・フォント：stale-while-revalidate
-  if (isCdnAsset(url)) {
-    event.respondWith(
-      caches.open(RUNTIME_CACHE).then(async (cache) => {
-        const cached = await cache.match(request);
-        const fetchPromise = fetch(request).then((response) => {
-          if (response.ok) cache.put(request, response.clone());
-          return response;
-        }).catch(() => cached);
-        return cached || fetchPromise;
-      })
-    );
-    return;
-  }
-
-  // 同一オリジンのその他アセット：キャッシュ優先
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      return cached || fetch(request).then((response) => {
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request);
         if (response.ok) {
-          const clone = response.clone();
-          caches.open(CORE_CACHE).then((cache) => cache.put(request, clone));
+          const core = await caches.open(CORE_CACHE);
+          await core.put('./index.html', response.clone());
         }
         return response;
-      });
-    }).catch(() => caches.match('./index.html'))
-  );
+      } catch (e) {
+        return (await caches.match('./index.html')) || (await caches.match('./'));
+      }
+    })());
+    return;
+  }
+
+  // CDN / 国土地理院の表示補助資産：キャッシュを即時表示しつつオンライン時に更新。
+  // PMTiles本体(cyberjapandata.gsi.go.jp)はindex.htmlのRange専用キャッシュで扱うためここには含めない。
+  if (isRuntimeAsset(url)) {
+    event.respondWith(staleWhileRevalidate(request));
+    return;
+  }
+
+  // 同一オリジンのその他資産：キャッシュ優先。
+  if (new URL(url).origin === self.location.origin) {
+    event.respondWith((async () => {
+      const cached = await caches.match(request);
+      if (cached) return cached;
+      try {
+        const response = await fetch(request);
+        if (response.ok) {
+          const core = await caches.open(CORE_CACHE);
+          await core.put(request, response.clone());
+        }
+        return response;
+      } catch (e) {
+        // 画像等でindex.htmlを返すと壊れたレスポンスになるため、ここではフォールバックしない。
+        throw e;
+      }
+    })());
+  }
 });

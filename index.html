@@ -28,12 +28,14 @@
     <link rel="preconnect" href="https://cdn.tailwindcss.com">
 
     <!-- Leaflet.js CDN -->
-    <!-- 修正: 本体スクリプト内でトップレベル（HTML解析中）に L.divIcon 等を同期的に呼び出しているため、
-         defer を付けると「本体スクリプトの実行時点でLeafletがまだ読み込まれていない」= L is not defined
-         というエラーになっていた。地図の初期化自体はwindow.onloadで行っているが、
-         アイコン定義(createShelterDivIcon)はモジュール直下で即時実行されるため、ここはブロッキング読み込みに戻す。 -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- オフライン地図: 国土地理院 PMTiles + MapLibre（国土地理院公式デモと同系統） -->
+    <link rel="stylesheet" href="https://gsi-cyberjapan.github.io/optimal_bvmap/lib/maplibre-gl@2.4.0/maplibre-gl.css" />
+    <script src="https://gsi-cyberjapan.github.io/optimal_bvmap/lib/maplibre-gl@2.4.0/maplibre-gl.js" defer></script>
+    <script src="https://gsi-cyberjapan.github.io/optimal_bvmap/lib/pmtiles@2.10.0/index.js" defer></script>
+    <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.20/leaflet-maplibre-gl.js" defer></script>
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com" defer></script>
@@ -158,6 +160,25 @@
             color: var(--md-on-surface-variant) !important;
             font-size: 20px !important;
             padding: 6px 8px 0 0 !important;
+        }
+
+        /* 地図の出典表示を操作パネルの裏に隠さない */
+        .leaflet-control-attribution {
+            max-width: calc(100vw - 12px);
+            white-space: normal;
+            line-height: 1.25;
+        }
+        @media (min-width: 769px) {
+            .leaflet-bottom.leaflet-right {
+                right: 396px; /* 右パネル380px + 余白 */
+            }
+        }
+        @media (max-width: 768px) {
+            .leaflet-control-attribution {
+                margin-right: 4px !important;
+                margin-bottom: 62px !important; /* 折りたたみ中のボトムシートより上 */
+                max-width: calc(100vw - 12px);
+            }
         }
     </style>
 </head>
@@ -306,25 +327,25 @@
     <div id="toast-container" class="fixed top-4 left-1/2 transform -translate-x-1/2 md:left-auto md:right-4 md:transform-none z-[2000] flex flex-col gap-2 pointer-events-none w-[90%] max-w-sm"></div>
 
     <!-- 出典情報モーダル -->
-    <div id="info-modal" class="hidden fixed inset-0 z-[2100] flex items-center justify-center p-6">
+    <div id="info-modal" class="hidden fixed inset-0 z-[2100] flex items-center justify-center p-6" role="dialog" aria-modal="true" aria-labelledby="info-modal-title">
         <div id="info-modal-backdrop" class="absolute inset-0 bg-black/40"></div>
         <div class="relative bg-white rounded-3xl shadow-2xl p-6 max-w-xs w-full flex flex-col gap-4">
             <div class="flex items-center gap-2.5">
                 <span class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-black shrink-0" style="background-color: var(--md-primary-container); color: var(--md-on-primary-container);">i</span>
-                <h2 class="font-bold text-base" style="color: var(--md-on-surface);">出典について</h2>
+                <h2 id="info-modal-title" class="font-bold text-base" style="color: var(--md-on-surface);">出典について</h2>
             </div>
-            <p class="text-sm leading-relaxed" style="color: var(--md-on-surface-variant);">避難場所は総社市の公式サイトから引用</p>
+            <p class="text-sm leading-relaxed" style="color: var(--md-on-surface-variant);">避難場所は総社市の公式サイトから引用。オフライン地図は「国土地理院最適化ベクトルタイル」を利用しています。</p>
             <button id="btn-info-close" class="m3-interactive w-full py-2.5 rounded-full font-bold text-sm text-white active:scale-[0.98] transition-transform" style="background-color: var(--md-primary);">閉じる</button>
         </div>
     </div>
 
     <!-- オフライン地図削除 確認モーダル -->
-    <div id="delete-map-modal" class="hidden fixed inset-0 z-[2100] flex items-center justify-center p-6">
+    <div id="delete-map-modal" class="hidden fixed inset-0 z-[2100] flex items-center justify-center p-6" role="dialog" aria-modal="true" aria-labelledby="delete-map-modal-title">
         <div id="delete-map-modal-backdrop" class="absolute inset-0 bg-black/40"></div>
         <div class="relative bg-white rounded-3xl shadow-2xl p-6 max-w-xs w-full flex flex-col gap-4">
             <div class="flex items-center gap-2.5">
                 <span class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-black shrink-0" style="background-color: #fdecea; color: #b3261e;">!</span>
-                <h2 class="font-bold text-base" style="color: var(--md-on-surface);">オフライン地図の削除</h2>
+                <h2 id="delete-map-modal-title" class="font-bold text-base" style="color: var(--md-on-surface);">オフライン地図の削除</h2>
             </div>
             <p class="text-sm leading-relaxed" style="color: var(--md-on-surface-variant);">保存済みのオフライン地図データを削除しますか？削除後は再度オンラインでダウンロードするまで、オフライン環境で地図が表示できなくなります。</p>
             <div class="flex gap-2">
@@ -449,6 +470,10 @@
         };
 
         let map;
+        let onlineTileLayer = null;
+        let offlineVectorLayer = null;
+        let gsiProtocol = null;
+        let gsiPmtiles = null;
         let markers = [];
         let userMarker = null;
         let userLocation = null;
@@ -472,18 +497,39 @@
         const MAP_BOUNDS = { south: 34.61, west: 133.60, north: 34.80, east: 133.83 };
 
         // ================= オフライン地図保存 設定 =================
-        // タイルの取得元URL（サブドメインを固定してキャッシュを一貫させる）
+        // オンライン表示は従来どおりOpenStreetMap。
+        // 「オフライン用に地図を保存」では、OSM公式タイルの一括取得を行わず、
+        // 国土地理院が試験公開しているPMTiles版「最適化ベクトルタイル」をRange取得して端末内に保存する。
         const OSM_TILE_URL_TEMPLATE = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-        // Service Worker (service-worker.js) の TILE_CACHE と同じ名前にすること
-        const TILE_CACHE_NAME = 'hinanjo-tiles-v1';
-        // 事前ダウンロードするズーム範囲。広げるとタイル数が指数的に増える。
-        // 市内という狭いエリアの地図であるため、広い範囲を見渡す「縮小」側の必要性は低く、
-        // 個々の建物・避難所を正確に確認できる「拡大」側を優先する方針にしている。
-        // 実機で試した結果、拡大側はz16程度で実用上十分と判断し、この範囲に調整した。
-        // MAP_BOUNDSの範囲では目安として z15〜16で合計 約2,333枚
-        // （内訳: z15=484 / z16=1,849）。旧設定(z13〜15、約650枚)の約3.6倍。
+        const GSI_PMTILES_URL = 'https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/optimal_bvmap-v1.pmtiles';
+        const GSI_STYLE_URL = 'https://gsi-cyberjapan.github.io/optimal_bvmap/style/std.json';
+        const GSI_SPRITE_BASE_URL = 'https://gsi-cyberjapan.github.io/optimal_bvmap/sprite/std';
+        const GSI_GLYPHS_BASE_URL = 'https://gsi-cyberjapan.github.io/optimal_bvmap/glyphs';
+        // 国土地理院の公開データ更新日（2026-04-01）に合わせたローカルキャッシュ世代。
+        // 将来データ世代を更新する場合はこの文字列も更新する。
+        const OFFLINE_DATA_VERSION = 'gsi-optbv-2026-04-v2';
+        const PMTILES_RANGE_CACHE_NAME = `hinanjo-pmtiles-${OFFLINE_DATA_VERSION}`;
+        const RUNTIME_CACHE_NAME = 'hinanjo-runtime-v2';
+        const OFFLINE_COMPLETE_URL = new URL(`./__offline-map-complete__/${OFFLINE_DATA_VERSION}`, location.href).href;
+        const OFFLINE_APP_ASSET_URLS = [
+            'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+            'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+            'https://cdn.tailwindcss.com',
+            'https://gsi-cyberjapan.github.io/optimal_bvmap/lib/maplibre-gl@2.4.0/maplibre-gl.css',
+            'https://gsi-cyberjapan.github.io/optimal_bvmap/lib/maplibre-gl@2.4.0/maplibre-gl.js',
+            'https://gsi-cyberjapan.github.io/optimal_bvmap/lib/pmtiles@2.10.0/index.js',
+            'https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.20/leaflet-maplibre-gl.js'
+        ];
+        // 画面上で許可するオフラインズーム範囲。UI/操作感はv1と同じz15〜16を維持する。
         const OFFLINE_MIN_ZOOM = 15;
         const OFFLINE_MAX_ZOOM = 16;
+
+        // MapLibre GL LeafletはLeafletのズーム値から1を引いてMapLibreへ同期するため、
+        // 画面上のz15〜16に対応するGSIベクトルPMTilesはz14〜15を保存する。
+        // 地図キャンバスの描画余白で境界外の隣接タイルが必要になる場合に備え、1タイル分だけ外側も含める。
+        const OFFLINE_PMTILES_MIN_ZOOM = OFFLINE_MIN_ZOOM - 1;
+        const OFFLINE_PMTILES_MAX_ZOOM = OFFLINE_MAX_ZOOM - 1;
+        const OFFLINE_TILE_PADDING = 1;
         // オンライン中はタイルをその場で都度取得できるため、事前ダウンロード範囲に縛られず
         // OSM標準タイルが提供する範囲でズーム自由度を持たせる（0=世界全体 / 19=OSM標準の最大精細度）。
         // オフライン中は「保存済みタイルの範囲＝実際に表示できる範囲」に一致させることで、
@@ -595,22 +641,18 @@
             // ズームコントロールの位置を左下に変更
             L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
-            // 注意: {s}によるサブドメイン分散(a/b/c)を使うと、同じタイルでも
-            // 呼び出しごとに異なるURL（a.tile... / b.tile...）になり、
-            // 事前にキャッシュしたタイルとURLが一致せずオフライン時にキャッシュが
-            // ヒットしないことがあるため、ホストを固定してキャッシュの一貫性を保つ。
-            // maxZoomはタイル自体が提供される上限（=オンライン時の上限）に合わせておく。
-            // 実際にユーザーがズームできる範囲はmap側のminZoom/maxZoom
-            // （通信状態に応じてapplyZoomRangeForConnectionが切り替える）で制御する。
-            const tileLayer = L.tileLayer(OSM_TILE_URL_TEMPLATE, {
+            // オンライン中の通常表示は従来どおりOSM。
+            // Service WorkerではOSMタイルを永続キャッシュせず、ブラウザ標準のHTTPキャッシュに任せる。
+            onlineTileLayer = L.tileLayer(OSM_TILE_URL_TEMPLATE, {
                 attribution: '&copy; OpenStreetMap contributors',
-                maxZoom: ONLINE_MAX_ZOOM
+                maxZoom: ONLINE_MAX_ZOOM,
+                crossOrigin: true
             }).addTo(map);
 
             // オンライン時にタイル取得が失敗し続けている場合、原因不明のまま
             // 「地図が真っ白/一部しか出ない」状態になるのを防ぐため、利用者に一度だけ知らせる
             let tileErrorNotified = false;
-            tileLayer.on('tileerror', () => {
+            onlineTileLayer.on('tileerror', () => {
                 if (navigator.onLine && !tileErrorNotified) {
                     tileErrorNotified = true;
                     showToast('地図タイルの読み込みに失敗しました。通信状況をご確認ください');
@@ -618,14 +660,18 @@
                 }
             });
 
-            // 通信状態が変化するたびにズーム範囲を切り替える
-            window.addEventListener('online', () => {
+            // 通信状態が変化するたびにズーム範囲とベースマップを切り替える
+            window.addEventListener('online', async () => {
                 applyZoomRangeForConnection();
+                await syncBaseLayerForConnection();
                 showToast('オンラインになりました（ズーム制限を解除しました）');
             });
-            window.addEventListener('offline', () => {
+            window.addEventListener('offline', async () => {
                 applyZoomRangeForConnection();
-                showToast('オフラインになりました（保存済み範囲にズームを制限します）');
+                await syncBaseLayerForConnection();
+                showToast(offlineMapReady
+                    ? 'オフラインになりました（保存済み地図に切り替えました）'
+                    : 'オフラインになりました（地図未保存のため背景地図を表示できない場合があります）');
             });
 
             renderMarkers();
@@ -663,8 +709,13 @@
                 iconAnchor: [20, 39] // ピンの先端が正確な位置を指すようにアンカーを調整
             });
         }
-        const SHELTER_ICON_DEFAULT = createShelterDivIcon(false);
-        const SHELTER_ICON_SELECTED = createShelterDivIcon(true);
+        // Leaflet CDNが失敗した時でもエラー画面まで到達できるよう、Lを使う生成処理はstartApp後に遅延する。
+        let SHELTER_ICON_DEFAULT = null;
+        let SHELTER_ICON_SELECTED = null;
+        function initShelterIcons() {
+            SHELTER_ICON_DEFAULT = createShelterDivIcon(false);
+            SHELTER_ICON_SELECTED = createShelterDivIcon(true);
+        }
 
         function getFilteredShelters() {
             return MOCK_SHELTERS.filter(shelter => {
@@ -1039,6 +1090,11 @@
         }
         btnInfoClose.addEventListener('click', closeInfoModal);
         infoModalBackdrop.addEventListener('click', closeInfoModal);
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            if (!deleteMapModal.classList.contains('hidden')) closeDeleteMapModal();
+            if (!infoModal.classList.contains('hidden')) closeInfoModal();
+        });
 
         // ================= オフライン用マップ事前ダウンロード =================
         // 緯度経度からタイル座標(x, y)を求める（Slippy map tilenames方式）
@@ -1050,14 +1106,17 @@
             return { x, y };
         }
 
-        // 保存対象タイルの座標一覧を作成（MAP_BOUNDS × OFFLINE_MIN_ZOOM〜OFFLINE_MAX_ZOOM）
+        // 保存対象PMTilesの座標一覧を作成。画面上のLeaflet z15〜16はMapLibre側ではz14〜15になる。
         function getOfflineTileList() {
-            let tiles = [];
-            for (let z = OFFLINE_MIN_ZOOM; z <= OFFLINE_MAX_ZOOM; z++) {
+            const tiles = [];
+            for (let z = OFFLINE_PMTILES_MIN_ZOOM; z <= OFFLINE_PMTILES_MAX_ZOOM; z++) {
                 const t1 = lonLatToTile(MAP_BOUNDS.north, MAP_BOUNDS.west, z); // 北西端
                 const t2 = lonLatToTile(MAP_BOUNDS.south, MAP_BOUNDS.east, z); // 南東端
-                const xMin = Math.min(t1.x, t2.x), xMax = Math.max(t1.x, t2.x);
-                const yMin = Math.min(t1.y, t2.y), yMax = Math.max(t1.y, t2.y);
+                const maxTileIndex = Math.pow(2, z) - 1;
+                const xMin = Math.max(0, Math.min(t1.x, t2.x) - OFFLINE_TILE_PADDING);
+                const xMax = Math.min(maxTileIndex, Math.max(t1.x, t2.x) + OFFLINE_TILE_PADDING);
+                const yMin = Math.max(0, Math.min(t1.y, t2.y) - OFFLINE_TILE_PADDING);
+                const yMax = Math.min(maxTileIndex, Math.max(t1.y, t2.y) + OFFLINE_TILE_PADDING);
                 for (let x = xMin; x <= xMax; x++) {
                     for (let y = yMin; y <= yMax; y++) {
                         tiles.push({ x, y, z });
@@ -1067,11 +1126,121 @@
             return tiles;
         }
 
-        function tileToUrl(t) {
-            return OSM_TILE_URL_TEMPLATE
-                .replace('{z}', t.z)
-                .replace('{x}', t.x)
-                .replace('{y}', t.y);
+        // ================= PMTilesオフラインキャッシュ =================
+        // Cache StorageではRangeレスポンスをそのままURLキーにできないため、
+        // 「offset + length」を同一オリジンの仮想URLに変換して保存する。
+        function makePmtilesRangeCacheKey(offset, length) {
+            const u = new URL('./__pmtiles_range__', location.href);
+            u.searchParams.set('v', OFFLINE_DATA_VERSION);
+            u.searchParams.set('offset', String(offset));
+            u.searchParams.set('length', String(length));
+            return u.href;
+        }
+
+        class CachedPmtilesSource {
+            constructor(url) {
+                this.url = url;
+            }
+            getKey() {
+                return this.url;
+            }
+            async getBytes(offset, length, signal) {
+                const cache = await caches.open(PMTILES_RANGE_CACHE_NAME);
+                const key = makePmtilesRangeCacheKey(offset, length);
+                const cached = await cache.match(key);
+                if (cached) {
+                    return {
+                        data: await cached.arrayBuffer(),
+                        etag: cached.headers.get('x-pmtiles-etag') || undefined,
+                        cacheControl: cached.headers.get('x-pmtiles-cache-control') || undefined,
+                        expires: cached.headers.get('x-pmtiles-expires') || undefined
+                    };
+                }
+                if (!navigator.onLine) {
+                    throw new Error(`PMTiles range is not cached: ${offset}-${offset + length - 1}`);
+                }
+
+                const headers = new Headers({ Range: `bytes=${offset}-${offset + length - 1}` });
+                const response = await fetch(this.url, { headers, signal, cache: 'no-store' });
+                if (!(response.ok || response.status === 206)) {
+                    throw new Error(`PMTiles range fetch failed: HTTP ${response.status}`);
+                }
+                const data = await response.arrayBuffer();
+                // Rangeを無視して巨大ファイル全体を返すサーバでは誤って全国データを保存しない。
+                if (response.status === 200 && data.byteLength > Math.max(length * 2, length + 1024 * 1024)) {
+                    throw new Error('PMTiles server did not honor the Range request');
+                }
+
+                const etag = response.headers.get('etag') || '';
+                const cacheControl = response.headers.get('cache-control') || '';
+                const expires = response.headers.get('expires') || '';
+                const stored = new Response(data.slice(0), {
+                    headers: {
+                        'Content-Type': 'application/octet-stream',
+                        'x-pmtiles-etag': etag,
+                        'x-pmtiles-cache-control': cacheControl,
+                        'x-pmtiles-expires': expires
+                    }
+                });
+                await cache.put(key, stored);
+                return {
+                    data,
+                    etag: etag || undefined,
+                    cacheControl: cacheControl || undefined,
+                    expires: expires || undefined
+                };
+            }
+        }
+
+        function offlineLibrariesAvailable() {
+            return typeof maplibregl !== 'undefined' && typeof pmtiles !== 'undefined' && typeof L !== 'undefined' && typeof L.maplibreGL === 'function';
+        }
+
+        function ensureOfflinePmtiles() {
+            if (!offlineLibrariesAvailable()) {
+                throw new Error('オフライン地図ライブラリの読み込みに失敗しました');
+            }
+            if (!gsiProtocol) {
+                gsiProtocol = new pmtiles.Protocol();
+                maplibregl.addProtocol('pmtiles', gsiProtocol.tile);
+                gsiPmtiles = new pmtiles.PMTiles(new CachedPmtilesSource(GSI_PMTILES_URL));
+                // 同じPMTilesインスタンスをMapLibreと事前ダウンロード処理で共有する。
+                if (typeof gsiProtocol.add === 'function') {
+                    gsiProtocol.add(gsiPmtiles);
+                }
+            }
+            return gsiPmtiles;
+        }
+
+        async function ensureOfflineVectorLayer() {
+            ensureOfflinePmtiles();
+            if (!offlineVectorLayer) {
+                offlineVectorLayer = L.maplibreGL({
+                    style: GSI_STYLE_URL,
+                    attributionControl: false,
+                    localIdeographFontFamily: 'Noto Sans JP'
+                });
+                // Leaflet側のattribution controlに載せる。右パネル/ボトムシートの裏に隠れないCSSも適用済み。
+                offlineVectorLayer.getAttribution = () => '出典：国土地理院最適化ベクトルタイル';
+            }
+            return offlineVectorLayer;
+        }
+
+        async function syncBaseLayerForConnection() {
+            if (!map) return;
+            if (!navigator.onLine && offlineMapReady) {
+                try {
+                    const layer = await ensureOfflineVectorLayer();
+                    if (onlineTileLayer && map.hasLayer(onlineTileLayer)) map.removeLayer(onlineTileLayer);
+                    if (!map.hasLayer(layer)) layer.addTo(map);
+                    return;
+                } catch (e) {
+                    console.warn('[避難所マップ] 保存済み地図への切替失敗:', e);
+                }
+            }
+
+            if (offlineVectorLayer && map.hasLayer(offlineVectorLayer)) map.removeLayer(offlineVectorLayer);
+            if (onlineTileLayer && !map.hasLayer(onlineTileLayer)) onlineTileLayer.addTo(map);
         }
 
         // ダウンロードボタンの見た目を「未保存」⇔「準備完了」で切り替える
@@ -1085,32 +1254,89 @@
             btnDownloadMap.style.color = isReady ? 'var(--md-on-primary-container)' : 'var(--md-on-secondary-container)';
         }
 
-        // 起動時などに、既に必要なタイルが全部キャッシュ済みかどうかを確認してボタンに反映
+        // 完了マーカーがある時だけ「準備完了」とする。枚数ではなく、全処理完了後に原子的に印を付ける。
         async function refreshDownloadButtonState() {
             if (!('caches' in window)) return;
             try {
-                const total = getOfflineTileList().length;
-                const cache = await caches.open(TILE_CACHE_NAME);
-                const keys = await cache.keys();
-                setDownloadButtonReady(total > 0 && keys.length >= total);
+                const cache = await caches.open(PMTILES_RANGE_CACHE_NAME);
+                const marker = await cache.match(OFFLINE_COMPLETE_URL);
+                setDownloadButtonReady(Boolean(marker));
+                await syncBaseLayerForConnection();
             } catch (e) {
-                // 確認できない場合は未保存表示のままにしておく
+                setDownloadButtonReady(false);
             }
         }
 
-        // タイル取得の同時実行数・リクエスト間隔を回線状況に応じて調整する
-        // ・OpenStreetMapのタイルサーバーへの配慮として「同時に叩きすぎない」方針は維持しつつ、
-        // 　これまで一律だった値を、実際の回線が速い場合は少し引き上げてダウンロード時間を短縮する。
-        // ・Network Information API (navigator.connection) はAndroid Chromeでは利用できるが、
-        // 　iPadOS/iOS Safariには実装がないため、その場合は「通常回線」を想定した値にフォールバックする。
+        // スタイル・スプライト・主要文字グリフも保存し、PMTiles本体だけ保存されてラベルが出ない状態を防ぐ。
+        async function fetchIntoRuntimeCache(url) {
+            const cache = await caches.open(RUNTIME_CACHE_NAME);
+            const existing = await cache.match(url);
+            if (existing) return existing;
+            const res = await fetch(url, { cache: 'no-store' });
+            if (!res.ok) throw new Error(`asset fetch failed: ${url}`);
+            await cache.put(url, res.clone());
+            return res;
+        }
+
+        function collectFontStacks(style) {
+            const result = new Set();
+            for (const layer of (style.layers || [])) {
+                const value = layer && layer.layout ? layer.layout['text-font'] : null;
+                if (!Array.isArray(value)) continue;
+                if (value[0] === 'literal' && Array.isArray(value[1])) {
+                    result.add(value[1].join(','));
+                } else if (value.length > 0 && value.every(v => typeof v === 'string')) {
+                    result.add(value.join(','));
+                }
+            }
+            result.add('NotoSansJP-Regular');
+            result.add('NotoSerifJP-Medium');
+            result.add('NotoSerifJP-SemiBold');
+            return [...result];
+        }
+
+        async function cacheOfflineRenderAssets() {
+            // PWA再起動に必要なライブラリも、SWのinstall成否に依存せず明示的に保存する。
+            await Promise.all(OFFLINE_APP_ASSET_URLS.map(fetchIntoRuntimeCache));
+            const styleResponse = await fetchIntoRuntimeCache(GSI_STYLE_URL);
+            const style = await styleResponse.clone().json();
+
+            // Spriteは通常/Retinaの両方を保存。
+            await Promise.all([
+                `${GSI_SPRITE_BASE_URL}.json`, `${GSI_SPRITE_BASE_URL}.png`,
+                `${GSI_SPRITE_BASE_URL}@2x.json`, `${GSI_SPRITE_BASE_URL}@2x.png`
+            ].map(fetchIntoRuntimeCache));
+
+            // 日本語はMapLibreのローカル描画も使うが、端末差に備えて主要Unicode範囲のglyphも保存。
+            const ranges = [0, 256, 12288, 12544, 65280];
+            // CJK Unified Ideographs (U+4E00〜U+9FFF)
+            for (let r = 19968; r <= 40960; r += 256) ranges.push(r);
+            const fontStacks = collectFontStacks(style);
+            const glyphUrls = [];
+            for (const fontStack of fontStacks) {
+                for (const start of ranges) {
+                    glyphUrls.push(`${GSI_GLYPHS_BASE_URL}/${encodeURIComponent(fontStack)}/${start}-${start + 255}.pbf`);
+                }
+            }
+            // GitHub Pages側へ瞬間的に大量アクセスしないよう少数並列で取得。
+            let i = 0;
+            async function glyphWorker() {
+                while (i < glyphUrls.length) {
+                    const url = glyphUrls[i++];
+                    try { await fetchIntoRuntimeCache(url); } catch (e) { console.warn('glyph cache skipped:', url, e); }
+                    await new Promise(r => setTimeout(r, 20));
+                }
+            }
+            await Promise.all(Array.from({ length: 3 }, () => glyphWorker()));
+        }
+
+        // PMTilesのRange取得は1リクエストに複数情報がまとまるため、無理に高並列にしない。
         function getDownloadTuning() {
             const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
             if (conn && (conn.saveData || ['slow-2g', '2g', '3g'].includes(conn.effectiveType))) {
-                // データ節約モード or低速回線と判定した場合は、これまで通り控えめに
-                return { concurrency: 2, intervalMs: 150 };
+                return { concurrency: 2, intervalMs: 80 };
             }
-            // Wi-Fi/4G以上を想定した標準値（iPadOS/Androidの通常利用環境）
-            return { concurrency: 4, intervalMs: 60 };
+            return { concurrency: 4, intervalMs: 20 };
         }
 
         // ダウンロード進捗を表示する専用トースト（完了までは自動で消えない）
@@ -1164,81 +1390,88 @@
                 showToast('オンライン環境で実行してください');
                 return;
             }
+            if (!offlineLibrariesAvailable()) {
+                showToast('地図保存ライブラリの読み込みに失敗しました。再読み込みしてください');
+                return;
+            }
 
             const tiles = getOfflineTileList();
             const total = tiles.length;
-            const cache = await caches.open(TILE_CACHE_NAME);
-
-            // 既に全タイルが保存済みなら通信せずに終了（再タップ時の無駄な負荷を避ける）
-            const existingKeys = await cache.keys();
-            if (total > 0 && existingKeys.length >= total) {
-                showToast('オフライン地図は既に最新の状態です');
+            const rangeCache = await caches.open(PMTILES_RANGE_CACHE_NAME);
+            const marker = await rangeCache.match(OFFLINE_COMPLETE_URL);
+            if (marker) {
+                showToast('オフライン地図は既に準備完了です');
                 setDownloadButtonReady(true);
                 return;
             }
 
-            let done = 0;
             btnDownloadMap.disabled = true;
             btnDownloadMap.classList.add('opacity-60');
-            btnDownloadMapLabel.innerText = '保存中...';
-            updateDownloadProgress(0, total);
+            btnDownloadMapLabel.innerText = '準備中...';
 
-            // OpenStreetMapのタイルサーバーへの配慮は維持しつつ、回線状況に応じて
-            // 同時実行数・間隔を調整することでダウンロード時間を短縮する。
-            // （固定で重い間隔を挟んでいた旧実装に比べ、Wi-Fi/4G環境では体感的に大幅に速くなる）
-            const { concurrency: CONCURRENCY, intervalMs: REQUEST_INTERVAL_MS } = getDownloadTuning();
-            let index = 0;
+            // ブラウザが対応していれば、保存データが自動削除されにくいPersistent Storageを要求する。
+            try {
+                if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
+            } catch (e) { /* 非対応・拒否は継続可能 */ }
+
+            let done = 0;
             let failed = 0;
             const startTime = performance.now();
+            const { concurrency: CONCURRENCY, intervalMs: REQUEST_INTERVAL_MS } = getDownloadTuning();
 
-            async function worker() {
-                while (index < tiles.length) {
-                    const t = tiles[index++];
-                    const url = tileToUrl(t);
-                    let fetchedFromNetwork = false;
-                    try {
-                        const already = await cache.match(url);
-                        if (!already) {
-                            const res = await fetch(url);
-                            fetchedFromNetwork = true;
-                            if (res && res.ok) {
-                                await cache.put(url, res.clone());
-                            } else {
-                                failed++;
-                            }
+            try {
+                const archive = ensureOfflinePmtiles();
+                // 地図スタイル等を先に保存。ここが失敗した状態では「準備完了」にしない。
+                await cacheOfflineRenderAssets();
+
+                btnDownloadMapLabel.innerText = '保存中...';
+                updateDownloadProgress(0, total);
+
+                let index = 0;
+                async function worker() {
+                    while (index < tiles.length) {
+                        const t = tiles[index++];
+                        try {
+                            // getZxy()が必要なヘッダ/ディレクトリ/タイルRangeをCachedPmtilesSource経由で保存する。
+                            // タイルが存在しない(undefined)場合も、その検索に必要なディレクトリは保存済みなので正常扱い。
+                            await archive.getZxy(t.z, t.x, t.y);
+                        } catch (e) {
+                            failed++;
+                            console.warn('[避難所マップ] PMTiles保存失敗:', t, e);
                         }
-                    } catch (e) {
-                        failed++;
-                    }
-                    done++;
-                    // 経過時間と完了数から残り時間を概算してユーザーに提示する
-                    const elapsed = performance.now() - startTime;
-                    const rate = done / elapsed; // 枚/ms
-                    const etaMs = rate > 0 ? (total - done) / rate : undefined;
-                    updateDownloadProgress(done, total, etaMs);
-                    // 既にキャッシュ済み（＝通信しなかった）タイルは待機不要。
-                    // 実際にサーバーへリクエストした時だけ間隔を空け、再開時の無駄な待ちをなくす。
-                    if (fetchedFromNetwork) {
+                        done++;
+                        const elapsed = performance.now() - startTime;
+                        const rate = done / Math.max(elapsed, 1);
+                        const etaMs = rate > 0 ? (total - done) / rate : undefined;
+                        updateDownloadProgress(done, total, etaMs);
                         await new Promise(r => setTimeout(r, REQUEST_INTERVAL_MS));
                     }
                 }
-            }
 
-            try {
                 await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+
                 if (failed === 0) {
-                    showToast(`地図データをオフライン保存しました（${total}枚）`);
+                    await rangeCache.put(OFFLINE_COMPLETE_URL, new Response(JSON.stringify({
+                        version: OFFLINE_DATA_VERSION,
+                        tileCount: total,
+                        completedAt: new Date().toISOString(),
+                        source: GSI_PMTILES_URL
+                    }), { headers: { 'Content-Type': 'application/json' } }));
                     setDownloadButtonReady(true);
+                    showToast(`地図データをオフライン保存しました（${total}タイル範囲）`);
+                    await syncBaseLayerForConnection();
                 } else {
-                    showToast(`保存が完了しました（一部失敗: ${failed}枚 / 全${total}枚）`);
                     setDownloadButtonReady(false);
+                    showToast(`一部の保存に失敗しました（${failed}/${total}）。もう一度押すと続きから再取得します`);
                 }
             } catch (e) {
-                showToast('地図データの保存中にエラーが発生しました');
+                console.error('[避難所マップ] オフライン保存エラー:', e);
                 setDownloadButtonReady(false);
+                showToast('地図データの保存中にエラーが発生しました');
             } finally {
                 btnDownloadMap.disabled = false;
                 btnDownloadMap.classList.remove('opacity-60');
+                if (!offlineMapReady) btnDownloadMapLabel.innerText = 'オフライン用に地図を保存';
             }
         }
 
@@ -1246,8 +1479,9 @@
         async function deleteOfflineMap() {
             btnDeleteMapConfirm.disabled = true;
             try {
-                await caches.delete(TILE_CACHE_NAME);
+                await caches.delete(PMTILES_RANGE_CACHE_NAME);
                 setDownloadButtonReady(false);
+                await syncBaseLayerForConnection();
                 showToast('オフライン地図データを削除しました');
             } catch (e) {
                 showToast('削除中にエラーが発生しました');
@@ -1287,8 +1521,16 @@
                 showMapLoadError();
                 return;
             }
+            initShelterIcons();
             initMap();
-            refreshDownloadButtonState();
+            // PMTiles/MapLibreはdefer読み込みなので、保存状態の確認・圏外地図への切替は
+            // DOMContentLoaded後（=deferスクリプト実行後）に行う。通常のオンライン地図は待たずに表示する。
+            const refreshOfflineState = () => refreshDownloadButtonState();
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', refreshOfflineState, { once: true });
+            } else {
+                refreshOfflineState();
+            }
             // 初期化直後にもう一度、実際に見えている高さでマップサイズを確定させる
             // （初期化タイミングでツールバーの表示状態が確定しきっていない端末向けの保険）
             setViewportHeight();
@@ -1306,6 +1548,8 @@
             document.getElementById('btn-reload-map').addEventListener('click', () => location.reload());
         }
 
+        // Leafletだけは小さく、通常地図の初期表示に必須なので同期読み込み。
+        // MapLibre/PMTiles/Tailwind/画像/フォントの完了は待たず、通常地図はすぐ開始する。
         startApp();
 
         // 画面リサイズ時の対応 (PC <-> モバイル のレイアウト切り替え)
@@ -1321,15 +1565,13 @@
 
         // ================= Service Worker登録（PWA / オフライン対応） =================
         if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./service-worker.js')
-                    .then((reg) => {
-                        console.log('Service Worker登録成功:', reg.scope);
-                    })
-                    .catch((err) => {
-                        console.warn('Service Worker登録失敗:', err);
-                    });
-            });
+            navigator.serviceWorker.register('./service-worker.js')
+                .then((reg) => {
+                    console.log('Service Worker登録成功:', reg.scope);
+                })
+                .catch((err) => {
+                    console.warn('Service Worker登録失敗:', err);
+                });
         }
     </script>
 </body>
