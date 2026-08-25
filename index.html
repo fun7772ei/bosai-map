@@ -334,7 +334,7 @@
                 <span class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-black shrink-0" style="background-color: var(--md-primary-container); color: var(--md-on-primary-container);">i</span>
                 <h2 id="info-modal-title" class="font-bold text-base" style="color: var(--md-on-surface);">出典について</h2>
             </div>
-            <p class="text-sm leading-relaxed" style="color: var(--md-on-surface-variant);">避難場所は総社市の公式サイトから引用。オフライン地図は「国土地理院最適化ベクトルタイル」を利用しています。</p>
+            <p class="text-sm leading-relaxed" style="color: var(--md-on-surface-variant);">避難場所は総社市の公式資料から引用。災害種別は「総社市地域防災計画（資料25、令和6年8月）」の○・△・×を河川別に反映しています。△は条件付避難可能（2階以上・建物の限定等）です。「河川氾濫」フィルターは4つの河川区分すべてが○の施設のみ表示します。オフライン地図は「国土地理院最適化ベクトルタイル」を利用しています。</p>
             <button id="btn-info-close" class="m3-interactive w-full py-2.5 rounded-full font-bold text-sm text-white active:scale-[0.98] transition-transform" style="background-color: var(--md-primary);">閉じる</button>
         </div>
     </div>
@@ -365,7 +365,7 @@
         });
 
         // 「総社市_避難所一覧」の公式指定避難所データ 88件
-        // ファクトチェック済み（2026-07-16）：総社市公式避難所一覧PDFおよびGoogleマップ上の
+        // ファクトチェック更新（2026-08-26）：総社市公式避難所一覧・地域防災計画（資料25）およびGoogleマップ上の
         // 各施設の公式住所と緯度経度を突合し、100m以上のズレがあった座標・
         // PDFと一致しなかった対応災害種別・住所の誤記を修正しています。
         // 修正箇所には shelter オブジェクトの直後に verified コメントを付与しています。
@@ -455,10 +455,81 @@
             { id: 83, name: "常盤公園", lat: 34.66698, lng: 133.739507, type: ["指定緊急避難場所"], desc: "岡山県総社市駅南1-24-1", disasters: ["earthquake", "flood", "landslide"] },
             { id: 84, name: "砂川公園駐車場", lat: 34.701096, lng: 133.76067, type: ["指定緊急避難場所"], desc: "岡山県総社市黒尾792", disasters: ["earthquake", "flood", "landslide"] },
             { id: 85, name: "西公園グラウンド", lat: 34.676381, lng: 133.705401, type: ["指定緊急避難場所"], desc: "岡山県総社市秦358", disasters: ["earthquake", "flood", "landslide"] }, // verified: 座標を約250m修正。対応災害もPDFに合わせ地震のみ→地震・水害・土砂災害に修正
-            { id: 86, name: "西ふれあい広場", lat: 34.664425, lng: 133.681121, type: ["指定緊急避難場所"], desc: "岡山県総社市久代2616-3", disasters: ["earthquake", "flood", "landslide"] }, // verified: 対応災害をPDFに合わせ地震のみ→地震・水害・土砂災害に修正。座標はユーザー提供の実測値（34.664425, 133.681121）に更新（元の座標から約2.6kmのズレを修正）
+            { id: 86, name: "西部ふれあい広場", lat: 34.664425, lng: 133.681121, type: ["指定緊急避難場所"], desc: "岡山県総社市久代2616-3", disasters: ["earthquake", "flood", "landslide"] }, // verified: 対応災害をPDFに合わせ地震のみ→地震・水害・土砂災害に修正。座標はユーザー提供の実測値（34.664425, 133.681121）に更新（元の座標から約2.6kmのズレを修正）
             { id: 87, name: "山手スポーツ広場", lat: 34.654162, lng: 133.78163, type: ["指定緊急避難場所"], desc: "岡山県総社市宿1778-1", disasters: ["earthquake", "flood", "landslide"] }, // verified: 座標が約1.3kmずれていたため修正。対応災害もPDFに合わせ地震のみ→地震・水害・土砂災害に修正
             { id: 88, name: "清音ふるさとふれあい広場", lat: 34.654842, lng: 133.75421, type: ["指定緊急避難場所"], desc: "岡山県総社市清音三因1017-4", disasters: ["earthquake", "flood", "landslide"] } // verified: 座標が約790m（主に経度）ずれていたため修正。対応災害もPDFに合わせ地震のみ→地震・水害・土砂災害に修正
         ];
+
+
+        // 総社市地域防災計画（資料25・令和6年8月）の災害種別。
+        // status = [地震, 高梁川本川, 新本川・津梅川・はざ谷川, 槙谷川・落合川, 足守川・砂川・前川, 土砂災害]
+        // ○=避難可 / △=条件付避難可能（2階以上・建物の限定等） / ×=避難不可
+        // 記載のないIDは6区分すべて○。
+        const OFFICIAL_HAZARD_EXCEPTIONS = {
+            20: ['×','○','○','○','○','○'],
+            23: ['×','○','○','○','○','○'],
+            25: ['×','○','○','○','○','○'],
+            30: ['×','○','○','○','○','○'],
+            34: ['○','○','○','○','△','○'],
+            35: ['×','○','○','○','○','○'],
+            41: ['○','○','○','○','○','△'],
+            42: ['○','○','○','×','○','○'],
+            43: ['○','○','○','×','○','○'],
+            44: ['○','△','○','○','○','△'],
+            46: ['○','×','○','○','○','○'],
+            48: ['○','×','○','○','○','○'],
+            49: ['○','△','○','○','○','○'],
+            50: ['○','×','○','○','○','○'],
+            51: ['○','×','○','○','○','○'],
+            55: ['○','○','○','○','○','×'],
+            56: ['○','○','○','○','○','×'],
+            57: ['○','○','○','○','○','△'],
+            59: ['○','○','×','○','○','○'],
+            60: ['○','△','○','○','○','○'],
+            61: ['○','△','○','○','○','△'],
+            62: ['○','△','○','○','○','○'],
+            63: ['○','×','○','○','○','×'],
+            64: ['○','×','○','○','○','×'],
+            65: ['○','△','○','○','○','△'],
+            66: ['○','×','○','○','○','×'],
+            67: ['○','×','○','○','○','○'],
+            68: ['○','○','○','○','○','×'],
+            72: ['×','○','○','○','○','○'],
+            75: ['○','△','○','○','○','○'],
+            76: ['○','△','○','○','○','○'],
+            77: ['○','△','○','○','○','○'],
+            78: ['○','×','○','○','○','○'],
+            79: ['○','×','○','○','○','○'],
+            80: ['○','×','○','○','○','○'],
+            86: ['○','○','×','○','○','○']
+        };
+
+        const FLOOD_GROUP_LABELS = [
+            '高梁川本川',
+            '新本川・津梅川・はざ谷川',
+            '槙谷川・落合川',
+            '足守川・砂川・前川'
+        ];
+
+        function applyOfficialHazardStatuses() {
+            MOCK_SHELTERS.forEach((shelter) => {
+                const status = (OFFICIAL_HAZARD_EXCEPTIONS[shelter.id] || ['○','○','○','○','○','○']).slice();
+                const flood = status.slice(1, 5);
+                shelter.hazardStatus = {
+                    earthquake: status[0],
+                    flood,
+                    landslide: status[5]
+                };
+
+                // 既存の3種類フィルターを維持しつつ、安全側の判定にする。
+                // 河川氾濫は4河川区分すべて○の場合のみ「一般に対応」と扱う。
+                shelter.disasters = [];
+                if (status[0] === '○') shelter.disasters.push('earthquake');
+                if (flood.every(v => v === '○')) shelter.disasters.push('flood');
+                if (status[5] === '○') shelter.disasters.push('landslide');
+            });
+        }
+        applyOfficialHazardStatuses();
 
         // 対応災害の表示メタ情報（色・ラベル）
         // アイコンの色はM3の淡いコンテナ配色に合わせつつ、意味が直感的にわかるよう
@@ -747,13 +818,73 @@
             return shelter.type.map(t => `<span class="bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)] px-1.5 py-0.5 rounded text-[10px] font-bold">${t}</span>`).join('');
         }
         function buildDisasterBadgesHtml(shelter) {
-            return (shelter.disasters || []).map(d => {
-                const meta = DISASTER_META[d];
-                if (!meta) return '';
-                return `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${meta.classes}">
+            const status = shelter.hazardStatus;
+            if (!status) {
+                return (shelter.disasters || []).map(d => {
+                    const meta = DISASTER_META[d];
+                    if (!meta) return '';
+                    return `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${meta.classes}">
+                        <span class="w-1.5 h-1.5 rounded-full ${meta.dot}"></span>${meta.label}
+                    </span>`;
+                }).join('');
+            }
+
+            const badges = [];
+            if (status.earthquake === '○') {
+                const meta = DISASTER_META.earthquake;
+                badges.push(`<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${meta.classes}">
                     <span class="w-1.5 h-1.5 rounded-full ${meta.dot}"></span>${meta.label}
-                </span>`;
-            }).join('');
+                </span>`);
+            }
+
+            const floodAllOk = status.flood.every(v => v === '○');
+            if (floodAllOk) {
+                const meta = DISASTER_META.flood;
+                badges.push(`<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${meta.classes}">
+                    <span class="w-1.5 h-1.5 rounded-full ${meta.dot}"></span>${meta.label}
+                </span>`);
+            } else {
+                badges.push(`<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200">
+                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>河川別に確認
+                </span>`);
+            }
+
+            if (status.landslide === '○') {
+                const meta = DISASTER_META.landslide;
+                badges.push(`<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${meta.classes}">
+                    <span class="w-1.5 h-1.5 rounded-full ${meta.dot}"></span>${meta.label}
+                </span>`);
+            } else if (status.landslide === '△') {
+                badges.push(`<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>土砂災害△
+                </span>`);
+            }
+
+            return badges.join('');
+        }
+
+        function buildHazardDetailsHtml(shelter) {
+            const status = shelter.hazardStatus;
+            if (!status) return '';
+
+            const floodNeedsDetail = status.flood.some(v => v !== '○');
+            const landslideConditional = status.landslide === '△';
+            if (!floodNeedsDetail && !landslideConditional) return '';
+
+            const rows = [];
+            if (floodNeedsDetail) {
+                rows.push(...status.flood.map((v, i) =>
+                    `<div class="flex justify-between gap-2"><span>${FLOOD_GROUP_LABELS[i]}</span><strong>${v}</strong></div>`
+                ));
+            }
+            if (landslideConditional) {
+                rows.push(`<div class="flex justify-between gap-2"><span>土砂災害</span><strong>△</strong></div>`);
+            }
+
+            return `<div class="mt-2 pt-2 border-t border-gray-200 text-[10px] leading-relaxed" style="color: var(--md-on-surface-variant);">
+                <div class="font-bold mb-1">災害種別の詳細（○可 / △条件付 / ×不可）</div>
+                ${rows.join('')}
+            </div>`;
         }
 
         // マーカータップ時に地図上へ出す施設情報ポップアップの中身
@@ -766,6 +897,7 @@
                     <p class="text-[11px] mb-1.5" style="color: var(--md-on-surface-variant);">${shelter.desc}</p>
                     <div class="flex flex-wrap gap-1 mb-1">${buildTypeBadgesHtml(shelter)}</div>
                     <div class="flex flex-wrap gap-1">${buildDisasterBadgesHtml(shelter)}</div>
+                    ${buildHazardDetailsHtml(shelter)}
                     ${dist ? `<div class="text-[10px] font-bold px-2 py-1 rounded bg-[var(--md-surface-container)] text-[var(--md-on-surface-variant)] inline-block mt-2">${dist}</div>` : ''}
                 </div>
             `;
