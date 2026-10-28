@@ -1073,36 +1073,49 @@
             renderList();
         }
 
-        // GPSボタン処理
-        btnGps.addEventListener('click', () => {
-            const originalHtml = btnGps.innerHTML;
-            btnGps.innerHTML = '<span class="text-xs font-bold">取得中...</span>';
-            
+        // 起動時とGPSボタンで同じ処理を使う。手動選択開始後の古い結果は反映しない。
+        let locationRequestVersion = 0;
+        function requestGpsLocation() {
+            if (btnGps.disabled) return;
             if (!navigator.geolocation) {
-                showToast("GPSがサポートされていません");
-                btnGps.innerHTML = originalHtml;
+                showToast("位置情報に対応していません。地図から現在地を選択してください");
                 return;
             }
-            
+
+            const requestVersion = ++locationRequestVersion;
+            const originalHtml = btnGps.innerHTML;
+            btnGps.disabled = true;
+            btnGps.innerHTML = '<span class="text-xs font-bold">取得中...</span>';
+            const restoreButton = () => {
+                btnGps.innerHTML = originalHtml;
+                btnGps.disabled = false;
+            };
+
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
+                    restoreButton();
+                    if (requestVersion !== locationRequestVersion) return;
                     const lat = pos.coords.latitude;
                     const lng = pos.coords.longitude;
                     setUserLocation(lat, lng, "GPS");
                     map.flyTo([lat, lng], DETAIL_VIEW_ZOOM, { duration: 1 });
                     showToast("GPSで現在地を取得しました");
-                    btnGps.innerHTML = originalHtml;
                 },
                 (err) => {
-                    showToast("GPSの取得に失敗しました");
-                    btnGps.innerHTML = originalHtml;
+                    restoreButton();
+                    if (requestVersion !== locationRequestVersion) return;
+                    showToast(err.code === 1
+                        ? "位置情報の使用が許可されていません。地図から現在地を選択できます"
+                        : "現在地を取得できませんでした。GPSで再取得するか、地図から選択してください");
                 },
-                { enableHighAccuracy: true, timeout: 10000 }
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
             );
-        });
+        }
+        btnGps.addEventListener('click', requestGpsLocation);
 
         // マップから選択モード
         btnMapSelect.addEventListener('click', () => {
+            locationRequestVersion++;
             locationWindow.classList.add('hidden');
             centerPin.classList.remove('hidden');
             setLocationContainer.classList.remove('hidden');
@@ -1655,6 +1668,7 @@
             }
             initShelterIcons();
             initMap();
+            requestGpsLocation();
             // PMTiles/MapLibreはdefer読み込みなので、保存状態の確認・圏外地図への切替は
             // DOMContentLoaded後（=deferスクリプト実行後）に行う。通常のオンライン地図は待たずに表示する。
             const refreshOfflineState = () => refreshDownloadButtonState();
